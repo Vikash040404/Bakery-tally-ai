@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bakery Touch POS</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f8f9fa; font-family: 'Segoe UI', sans-serif; }
+        
+        /* GRID LAYOUT FOR BUTTONS */
+        .product-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); 
+            gap: 15px; 
+            margin-bottom: 30px; 
+        }
+        
+        /* THE BUTTON DESIGN */
+        .product-card {
+            background: white; border: 2px solid #e9ecef; border-radius: 15px;
+            padding: 20px; cursor: pointer; text-align: center;
+            transition: transform 0.1s, border-color 0.2s;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            user-select: none; /* Prevents text highlighting on double tap */
+        }
+        .product-card:active { transform: scale(0.95); background-color: #e7f5ff; border-color: #0d6efd; }
+        
+        .p-name { font-weight: 700; font-size: 1.1rem; color: #212529; margin-bottom: 5px; line-height: 1.2;}
+        .p-price { color: #198754; font-weight: 900; font-size: 1.2rem; }
+        .p-info { font-size: 0.8rem; color: #6c757d; margin-top: 5px;}
+
+        /* BILLING FOOTER */
+        .billing-bar { 
+            background: white; padding: 20px; border-top: 1px solid #ddd; 
+            position: fixed; bottom: 0; left: 0; width: 100%; 
+            box-shadow: 0 -5px 15px rgba(0,0,0,0.1); 
+            z-index: 1000;
+        }
+        .container-main { padding-bottom: 150px; } /* Space for footer */
+    </style>
+</head>
+<body>
+
+<div class="container container-main py-4">
+    <h4 class="text-center mb-4 fw-bold">🍰 Bakery Terminal</h4>
+
+    <div class="mb-4">
+        <input type="text" id="customerName" class="form-control form-control-lg" placeholder="Customer Name (Optional)">
+    </div>
+
+    <div id="productGrid" class="product-grid"></div>
+
+    <div class="card border-0 shadow-sm p-3">
+        <h6 class="fw-bold">Current Bill</h6>
+        <table class="table table-sm align-middle">
+            <thead class="table-light"><tr><th>Item</th><th>Qty</th><th class="text-end">Amt</th><th></th></tr></thead>
+            <tbody id="cartBody"></tbody>
+        </table>
+    </div>
+</div>
+
+<div class="billing-bar">
+    <div class="container">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h2 class="fw-bold mb-0">₹<span id="grandTotal">0.00</span></h2>
+            <div id="statusMsg" class="small fw-bold text-success"></div>
+        </div>
+        <button onclick="sendToTally()" class="btn btn-primary w-100 btn-lg fw-bold">GENERATE BILL</button>
+    </div>
+</div>
+
+<script>
+    // --- EDIT YOUR PRODUCTS HERE ---
+    const products = [
+        { name: "Butter Cookies", godown: "Floor 1", price: 200, pkg: "24 pcs" },
+        { name: "Milk Bread", godown: "Godown B", price: 40, pkg: "10 pcs" },
+        { name: "Fruit Cake", godown: "Main Shelf", price: 120, pkg: "5 pcs" },
+        { name: "Choco Muffin", godown: "Floor 2", price: 150, pkg: "12 pcs" },
+        { name: "Rusks (1kg)", godown: "Floor 1", price: 90, pkg: "1 pkt" },
+        { name: "Cream Roll", godown: "Counter", price: 15, pkg: "1 pc" }
+    ];
+
+    let cart = [];
+
+    // 1. Draw Buttons
+    const grid = document.getElementById('productGrid');
+    products.forEach(p => {
+        let btn = document.createElement('div');
+        btn.className = 'product-card';
+        btn.innerHTML = `<div class="p-name">${p.name}</div><div class="p-price">₹${p.price}</div><div class="p-info">${p.pkg}</div>`;
+        btn.onclick = () => addToCart(p);
+        grid.appendChild(btn);
+    });
+
+    // 2. Cart Logic
+    function addToCart(p) {
+        let item = cart.find(i => i.name === p.name);
+        if(item) item.quantity++;
+        else cart.push({...p, quantity: 1});
+        renderCart();
+    }
+
+    function renderCart() {
+        const tbody = document.getElementById('cartBody');
+        tbody.innerHTML = '';
+        let total = 0;
+        cart.forEach((item, idx) => {
+            let rowTotal = item.price * item.quantity;
+            total += rowTotal;
+            tbody.innerHTML += `
+                <tr>
+                    <td>${item.name}</td>
+                    <td><input type="number" class="form-control form-control-sm" style="width:50px" value="${item.quantity}" onchange="updateQty(${idx}, this.value)"></td>
+                    <td class="text-end fw-bold">₹${rowTotal}</td>
+                    <td class="text-end"><button class="btn btn-sm text-danger" onclick="removeItem(${idx})">&times;</button></td>
+                </tr>`;
+        });
+        document.getElementById('grandTotal').innerText = total.toFixed(2);
+    }
+
+    function updateQty(idx, val) {
+        if(val < 1) removeItem(idx);
+        else { cart[idx].quantity = parseInt(val); renderCart(); }
+    }
+    
+    function removeItem(idx) {
+        cart.splice(idx, 1); renderCart();
+    }
+
+    // 3. Send to Cloud
+    async function sendToTally() {
+        if(cart.length === 0) return alert("Cart is empty!");
+        let cName = document.getElementById('customerName').value.trim() || "Cash";
+        
+        let status = document.getElementById('statusMsg');
+        status.innerText = "⏳ Sending...";
+        
+        try {
+            let res = await fetch('/api/submit-bill', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ items: cart, customer: cName })
+            });
+            let result = await res.json();
+            
+            if(result.status === 'success') {
+                status.innerText = "✅ Sent to Shop Laptop!";
+                cart = []; renderCart(); document.getElementById('customerName').value = "";
+                setTimeout(() => status.innerText = "", 3000);
+            }
+        } catch(e) { alert("Internet Error! Check connection."); }
+    }
+</script>
+</body>
+</html>
